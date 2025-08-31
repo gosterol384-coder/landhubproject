@@ -1,6 +1,8 @@
 import { Plot, OrderData, Order } from '../types/land';
+import { mockDataService } from './mockDataService';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const USE_MOCK_DATA = !import.meta.env.VITE_API_URL; // Use mock data if no API URL is configured
 
 // Enhanced error handling with detailed logging
 interface ApiError extends Error {
@@ -23,6 +25,11 @@ function normalizeStatus(status: string | null | undefined): "available" | "take
 
 class PlotService {
   private async checkApiHealth(): Promise<boolean> {
+    // If using mock data, always return healthy
+    if (USE_MOCK_DATA) {
+      return true;
+    }
+    
     const now = Date.now();
     
     // Only check health every 30 seconds
@@ -141,6 +148,12 @@ class PlotService {
   }
 
   async getAllPlots(): Promise<Plot[]> {
+    // Use mock data if API is not configured
+    if (USE_MOCK_DATA) {
+      console.log('[PlotService] Using mock data service');
+      return await mockDataService.getAllPlots();
+    }
+    
     try {
       console.log('[PlotService] Fetching all plots from API...');
       const response = await this.fetchWithErrorHandling(`${API_BASE}/api/plots`);
@@ -234,6 +247,10 @@ class PlotService {
   }
 
   async getPlotById(plotId: string): Promise<Plot | null> {
+    if (USE_MOCK_DATA) {
+      return await mockDataService.getPlotById(plotId);
+    }
+    
     try {
       console.log(`Fetching plot ${plotId}...`);
       const response = await this.fetchWithErrorHandling(`${API_BASE}/api/plots/${plotId}`);
@@ -265,6 +282,10 @@ class PlotService {
   }
 
   async createOrder(plotId: string, orderData: OrderData): Promise<Order> {
+    if (USE_MOCK_DATA) {
+      return await mockDataService.createOrder(plotId, orderData);
+    }
+    
     try {
       console.log(`[PlotService] Creating order for plot ${plotId}`);
       
@@ -319,6 +340,10 @@ class PlotService {
     max_area?: number;
     bbox?: string;
   }): Promise<Plot[]> {
+    if (USE_MOCK_DATA) {
+      return await mockDataService.searchPlots(filters);
+    }
+    
     try {
       const params = new URLSearchParams();
       
@@ -375,6 +400,10 @@ class PlotService {
     villages: number;
     total_area_hectares: number;
   }> {
+    if (USE_MOCK_DATA) {
+      return await mockDataService.getSystemStats();
+    }
+    
     try {
       console.log('Fetching system statistics...');
       const response = await this.fetchWithErrorHandling(`${API_BASE}/api/stats`);
@@ -398,6 +427,10 @@ class PlotService {
     orders: Order[];
     total: number;
   }> {
+    if (USE_MOCK_DATA) {
+      return await mockDataService.getOrders(filters);
+    }
+    
     try {
       const params = new URLSearchParams();
       
@@ -426,6 +459,10 @@ class PlotService {
 
   // Health check method
   async checkHealth(): Promise<{ healthy: boolean; latency?: number; error?: string }> {
+    if (USE_MOCK_DATA) {
+      return await mockDataService.checkHealth();
+    }
+    
     const startTime = Date.now();
     
     try {
@@ -464,6 +501,10 @@ class PlotService {
 
   // Real-time data subscription (for future WebSocket implementation)
   subscribeToPlotUpdates(callback: (plots: Plot[]) => void): () => void {
+    if (USE_MOCK_DATA) {
+      return mockDataService.subscribeToPlotUpdates(callback);
+    }
+    
     // Placeholder for WebSocket implementation
     console.log('[PlotService] Plot update subscription requested');
     
