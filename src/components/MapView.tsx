@@ -7,6 +7,7 @@ import { plotService } from "../services/plotService";
 import LoadingSpinner from "./LoadingSpinner";
 import MapControls from "./MapControls";
 import PlotStatsPanel from "./PlotStatsPanel";
+import MapDebugPanel from "./MapDebugPanel";
 
 // Fix Leaflet default icons
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -86,24 +87,29 @@ const getStatusBadgeClass = (status: Plot["status"]): string => {
 // Enhanced geometry validation with detailed logging
 const isValidGeometry = (geometry: any): boolean => {
   if (!geometry || !geometry.type || !geometry.coordinates) {
+    console.warn("[MapView] Invalid geometry: missing type or coordinates", geometry);
     return false;
   }
 
   const isValidCoordinate = (coord: any): boolean => {
-    return (
-      Array.isArray(coord) &&
-      coord.length >= 2 &&
-      typeof coord[0] === "number" &&
-      typeof coord[1] === "number" &&
-      !isNaN(coord[0]) &&
-      !isNaN(coord[1]) &&
-      isFinite(coord[0]) &&
-      isFinite(coord[1]) &&
-      coord[0] >= -180 &&
-      coord[0] <= 180 &&
-      coord[1] >= -90 &&
-      coord[1] <= 90
-    );
+    if (!Array.isArray(coord) || coord.length < 2) {
+      return false;
+    }
+    
+    const [lng, lat] = coord;
+    
+    if (typeof lng !== "number" || typeof lat !== "number" || 
+        isNaN(lng) || isNaN(lat) || !isFinite(lng) || !isFinite(lat)) {
+      return false;
+    }
+    
+    // More specific bounds checking for Tanzania
+    if (lng < 29 || lng > 41 || lat < -12 || lat > -0.5) {
+      console.warn(`[MapView] Coordinate outside Tanzania bounds: [${lng}, ${lat}]`);
+      return false;
+    }
+    
+    return true;
   };
 
   try {
@@ -135,6 +141,7 @@ const isValidGeometry = (geometry: any): boolean => {
       );
     }
 
+    console.warn(`[MapView] Unsupported geometry type: ${geometry.type}`);
     return false;
   } catch (error) {
     console.error("[MapView] Geometry validation error:", error);
@@ -387,13 +394,52 @@ const MapView: React.FC<MapViewProps> = ({
       plotLayerRef.current = null;
     }
 
+    // Enhanced validation and logging
     const validPlots = plotsData.filter(plot => isValidGeometry(plot.geometry));
+    const invalidCount = plotsData.length - validPlots.length;
+    
+    if (invalidCount > 0) {
+      console.warn(`[MapView] Filtered out ${invalidCount} plots with invalid geometry`);
+    }
     
     if (validPlots.length === 0) {
       console.warn("[MapView] No valid plots to render");
+      // Still fit to Tanzania bounds even with no plots
       mapRef.current.fitBounds(TANZANIA_CONFIG.bounds);
       setLoading(false);
       return;
+    }
+
+    console.log(`[MapView] Rendering ${validPlots.length} valid plots`);
+    
+    // Log coordinate ranges for debugging
+    const allCoords: number[][] = [];
+    validPlots.forEach(plot => {
+      if (plot.geometry.type === "Polygon") {
+        allCoords.push(...plot.geometry.coordinates[0]);
+      } else if (plot.geometry.type === "MultiPolygon") {
+        plot.geometry.coordinates.forEach(polygon => {
+          allCoords.push(...polygon[0]);
+        });
+      }
+    });
+    
+    if (allCoords.length > 0) {
+      const lngs = allCoords.map(coord => coord[0]);
+      const lats = allCoords.map(coord => coord[1]);
+      const bounds = {
+        minLng: Math.min(...lngs),
+        maxLng: Math.max(...lngs),
+        minLat: Math.min(...lats),
+        maxLat: Math.max(...lats)
+      };
+      console.log('[MapView] Plot coordinate bounds:', bounds);
+      
+      // Validate bounds are within Tanzania
+      if (bounds.minLng < 29 || bounds.maxLng > 41 || bounds.minLat < -12 || bounds.maxLat > -0.5) {
+        console.error('[MapView] ❌ Plot coordinates are outside Tanzania bounds!', bounds);
+        console.error('[MapView] Expected bounds: lng 29-41, lat -12 to -0.5');
+      }
     }
 
     // Create GeoJSON data
@@ -460,17 +506,25 @@ const MapView: React.FC<MapViewProps> = ({
 
       plotLayerRef.current.addTo(mapRef.current);
       
+      console.log('[MapView] Plot layer added to map successfully');
+      
       // Create labels
       createPlotLabels(validPlots);
 
       // Fit bounds with padding
       const bounds = plotLayerRef.current.getBounds();
+      console.log('[MapView] Plot layer bounds:', bounds);
+      
       if (bounds.isValid()) {
+        console.log('[MapView] Fitting map to plot bounds');
         mapRef.current.fitBounds(bounds, { 
           padding: [20, 20], 
-          maxZoom: 15 
+          maxZoom: 15,
+          animate: true,
+          duration: 1.0
         });
       } else {
+        console.warn('[MapView] Invalid bounds, fitting to Tanzania bounds');
         mapRef.current.fitBounds(TANZANIA_CONFIG.bounds);
       }
 
@@ -537,8 +591,12 @@ const MapView: React.FC<MapViewProps> = ({
       
       // Verify container dimensions
       const rect = containerRef.current.getBoundingClientRect();
+      console.log('[MapView] Container dimensions:', rect.width, 'x', rect.height);
+      
       if (rect.width === 0 || rect.height === 0) {
-        throw new Error("Map container has invalid dimensions");
+        console.warn("[MapView] Container has zero dimensions, retrying in 100ms...");
+        setTimeout(() => initializeMap(), 100);
+        return;
       }
 
       // Create map instance
@@ -550,6 +608,8 @@ const MapView: React.FC<MapViewProps> = ({
         attributionControl: true,
         zoomControl: true,
         preferCanvas: true, // Better performance for many features
+        maxBounds: TANZANIA_CONFIG.bounds, // Restrict panning to Tanzania
+        maxBoundsViscosity: 0.5, // Allow some dragging outside bounds
       });
 
       // Base layers with fallback
@@ -558,7 +618,8 @@ const MapView: React.FC<MapViewProps> = ({
         {
           attribution: "&copy; OpenStreetMap contributors",
           maxZoom: 19,
-          errorTileUrl: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2Y4ZjlmYSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzZiNzI4MCI+VGlsZSBOb3QgQXZhaWxhYmxlPC90ZXh0Pjwvc3ZnPg==",
+          crossOrigin: true,
+          detectRetina: true,
         }
       );
 
@@ -567,11 +628,21 @@ const MapView: React.FC<MapViewProps> = ({
         {
           attribution: "Tiles &copy; Esri",
           maxZoom: 19,
+          crossOrigin: true,
         }
       );
 
       // Add default layer
       osmLayer.addTo(map);
+      
+      // Wait for tiles to load before marking map as ready
+      osmLayer.on('load', () => {
+        console.log('[MapView] Base tiles loaded successfully');
+      });
+      
+      osmLayer.on('tileerror', (e) => {
+        console.warn('[MapView] Tile loading error:', e);
+      });
 
       // Layer control
       L.control.layers(
@@ -592,6 +663,7 @@ const MapView: React.FC<MapViewProps> = ({
 
       // Map event handlers
       map.on('zoomend', () => {
+        console.log('[MapView] Zoom changed to:', map.getZoom());
         createPlotLabels(plots);
       });
 
@@ -600,12 +672,6 @@ const MapView: React.FC<MapViewProps> = ({
         const center = map.getCenter();
         const zoom = map.getZoom();
         console.log(`[MapView] Map moved to: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}, zoom: ${zoom}`);
-      });
-
-      map.on('load', () => {
-        console.log('[MapView] Map loaded successfully');
-        setIsMapReady(true);
-        setMapError(null);
       });
 
       map.on('error', (e) => {
@@ -618,7 +684,9 @@ const MapView: React.FC<MapViewProps> = ({
       // Force size calculation
       setTimeout(() => {
         map.invalidateSize();
+        console.log('[MapView] Map invalidated and ready');
         setIsMapReady(true);
+        setMapError(null);
       }, 100);
 
       console.log('[MapView] Map initialized successfully');
@@ -741,9 +809,21 @@ const MapView: React.FC<MapViewProps> = ({
       {/* Map container */}
       <div
         ref={containerRef}
-        className="h-full w-full"
-        style={{ minHeight: "400px" }}
+        className="h-full w-full absolute inset-0"
+        style={{ 
+          minHeight: "400px",
+          zIndex: 0
+        }}
       />
+
+      {/* Debug panel (only in development) */}
+      {process.env.NODE_ENV === 'development' && (
+        <MapDebugPanel 
+          mapRef={{ current: mapRef.current }}
+          plots={plots}
+          isMapReady={isMapReady}
+        />
+      )}
 
       {/* Enhanced loading overlay */}
       {loading && (

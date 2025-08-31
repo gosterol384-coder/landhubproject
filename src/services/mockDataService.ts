@@ -23,7 +23,10 @@ const mockPlots: Plot[] = [
     attributes: {
       land_use: "residential",
       soil_type: "sandy",
-      elevation: 45
+      elevation: 45,
+      Block_numb: "B001",
+      Plot_Numb: "001",
+      Locality: "Msasani Peninsula"
     },
     created_at: "2024-01-15T10:00:00Z",
     updated_at: "2024-01-15T10:00:00Z"
@@ -49,7 +52,10 @@ const mockPlots: Plot[] = [
     attributes: {
       land_use: "residential",
       soil_type: "clay",
-      elevation: 42
+      elevation: 42,
+      Block_numb: "B001",
+      Plot_Numb: "002",
+      Locality: "Msasani Peninsula"
     },
     created_at: "2024-01-15T10:00:00Z",
     updated_at: "2024-01-20T14:30:00Z"
@@ -75,7 +81,10 @@ const mockPlots: Plot[] = [
     attributes: {
       land_use: "agricultural",
       soil_type: "loam",
-      elevation: 48
+      elevation: 48,
+      Block_numb: "B001",
+      Plot_Numb: "003",
+      Locality: "Msasani Peninsula"
     },
     created_at: "2024-01-15T10:00:00Z",
     updated_at: "2024-01-22T09:15:00Z"
@@ -101,7 +110,10 @@ const mockPlots: Plot[] = [
     attributes: {
       land_use: "commercial",
       soil_type: "sandy",
-      elevation: 35
+      elevation: 35,
+      Block_numb: "B002",
+      Plot_Numb: "001",
+      Locality: "Kigamboni"
     },
     created_at: "2024-01-16T11:00:00Z",
     updated_at: "2024-01-16T11:00:00Z"
@@ -127,10 +139,71 @@ const mockPlots: Plot[] = [
     attributes: {
       land_use: "residential",
       soil_type: "clay",
-      elevation: 52
+      elevation: 52,
+      Block_numb: "B003",
+      Plot_Numb: "001",
+      Locality: "Upanga"
     },
     created_at: "2024-01-17T09:30:00Z",
     updated_at: "2024-01-17T09:30:00Z"
+  },
+  {
+    id: "plot-006",
+    plot_code: "ARUSHA/ARUSHA/001",
+    status: "available",
+    area_hectares: 3.0,
+    district: "Arusha",
+    ward: "Levolosi",
+    village: "Levolosi",
+    geometry: {
+      type: "Polygon",
+      coordinates: [[
+        [36.6800, -3.3700],
+        [36.6820, -3.3700],
+        [36.6820, -3.3720],
+        [36.6800, -3.3720],
+        [36.6800, -3.3700]
+      ]]
+    },
+    attributes: {
+      land_use: "residential",
+      soil_type: "volcanic",
+      elevation: 1400,
+      Block_numb: "B001",
+      Plot_Numb: "001",
+      Locality: "Levolosi"
+    },
+    created_at: "2024-01-18T08:00:00Z",
+    updated_at: "2024-01-18T08:00:00Z"
+  },
+  {
+    id: "plot-007",
+    plot_code: "MWANZA/NYAMAGANA/001",
+    status: "available",
+    area_hectares: 2.2,
+    district: "Nyamagana",
+    ward: "Pamba",
+    village: "Pamba",
+    geometry: {
+      type: "Polygon",
+      coordinates: [[
+        [32.9000, -2.5200],
+        [32.9020, -2.5200],
+        [32.9020, -2.5220],
+        [32.9000, -2.5220],
+        [32.9000, -2.5200]
+      ]]
+    },
+    attributes: {
+      land_use: "commercial",
+      soil_type: "clay",
+      elevation: 1140,
+      Block_numb: "B001",
+      Plot_Numb: "001",
+      Locality: "Pamba"
+    },
+    created_at: "2024-01-19T09:00:00Z",
+    updated_at: "2024-01-19T09:00:00Z"
   }
 ];
 

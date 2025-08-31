@@ -7,9 +7,9 @@ import './styles/globals.css';
 function App() {
   return (
     <ErrorBoundary>
-      <div className="h-screen flex flex-col bg-gray-50">
+      <div className="h-screen w-screen flex flex-col bg-gray-50 overflow-hidden">
         <Header />
-        <main className="flex-1 relative">
+        <main className="flex-1 relative overflow-hidden">
           <MapView 
             autoRefresh={true}
             refreshInterval={30000}
