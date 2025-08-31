@@ -18,6 +18,7 @@ const PlotOrderModal: React.FC<PlotOrderModalProps> = ({ plot, onClose, onSubmit
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState<'details' | 'form'>('details');
   const [errors, setErrors] = useState<Partial<OrderData>>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Auto-populate intended use from plot data
   useEffect(() => {
@@ -94,12 +95,14 @@ const PlotOrderModal: React.FC<PlotOrderModalProps> = ({ plot, onClose, onSubmit
       return;
     }
     
+    setSubmitError(null);
     setIsSubmitting(true);
 
     try {
       await onSubmit(formData);
     } catch (error) {
       console.error('Error submitting order:', error);
+      setSubmitError(error instanceof Error ? error.message : 'Failed to submit order');
     } finally {
       setIsSubmitting(false);
     }
@@ -335,6 +338,32 @@ const PlotOrderModal: React.FC<PlotOrderModalProps> = ({ plot, onClose, onSubmit
 
         {/* Order Form */}
         <form onSubmit={handleSubmit} className="p-6">
+          {/* Submit error display */}
+          {submitError && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <div className="flex items-start space-x-3">
+                <div className="w-5 h-5 text-red-500 mt-0.5">
+                  <svg fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-sm font-medium text-red-800">Order Submission Failed</h4>
+                  <p className="text-sm text-red-700 mt-1">{submitError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSubmitError(null)}
+                  className="text-red-400 hover:text-red-600 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label htmlFor="first_name" className="block text-sm font-medium text-gray-700 mb-2">
@@ -458,11 +487,11 @@ const PlotOrderModal: React.FC<PlotOrderModalProps> = ({ plot, onClose, onSubmit
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+                className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center space-x-2 shadow-sm hover:shadow-md"
               >
                 {isSubmitting ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                     <span>Securing Plot...</span>
                   </>
                 ) : (

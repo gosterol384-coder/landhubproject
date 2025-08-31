@@ -1,15 +1,18 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import PlotOrderModal from "./PlotOrderModal";
 import { Plot, OrderData } from "../types/land";
 import { plotService } from "../services/plotService";
 import LoadingSpinner from "./LoadingSpinner";
+import MapControls from "./MapControls";
+import PlotStatsPanel from "./PlotStatsPanel";
 
 // Fix Leaflet default icons
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
+
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
@@ -17,56 +20,72 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
-// Tanzania map bounds (approx)
-const TANZANIA_BOUNDS: L.LatLngTuple[] = [
-  [-11.75, 29.34], // SW
-  [-0.95, 40.44], // NE
-];
+// Tanzania map configuration
+const TANZANIA_CONFIG = {
+  center: [-6.369028, 34.888822] as L.LatLngTuple,
+  bounds: [
+    [-11.75, 29.34], // SW
+    [-0.95, 40.44], // NE
+  ] as L.LatLngBoundsExpression,
+  defaultZoom: 6,
+  minZoom: 5,
+  maxZoom: 18,
+};
 
-// Helpers (unchanged)
-const getPlotColor = (status: Plot["status"]): string => {
+// Enhanced plot styling with better visual hierarchy
+const getPlotStyle = (status: Plot["status"], isHovered: boolean = false) => {
+  const baseStyle = {
+    weight: isHovered ? 4 : 2,
+    color: "#ffffff",
+    fillOpacity: isHovered ? 0.9 : 0.7,
+    opacity: 1,
+  };
+
   switch (status) {
     case "available":
-      return "#10B981"; // green
+      return {
+        ...baseStyle,
+        fillColor: "#10B981", // emerald-500
+        dashArray: undefined,
+      };
     case "taken":
-      return "#EF4444"; // red
+      return {
+        ...baseStyle,
+        fillColor: "#EF4444", // red-500
+        fillOpacity: isHovered ? 0.8 : 0.6,
+        dashArray: undefined,
+      };
     case "pending":
-      return "#F59E0B"; // yellow
+      return {
+        ...baseStyle,
+        fillColor: "#F59E0B", // amber-500
+        dashArray: "8,4",
+      };
     default:
-      return "#6B7280"; // gray
+      return {
+        ...baseStyle,
+        fillColor: "#6B7280", // gray-500
+        dashArray: undefined,
+      };
   }
 };
 
 const getStatusBadgeClass = (status: Plot["status"]): string => {
   switch (status) {
     case "available":
-      return "bg-green-100 text-green-800 border border-green-200";
+      return "bg-emerald-100 text-emerald-800 border border-emerald-200";
     case "taken":
       return "bg-red-100 text-red-800 border border-red-200";
     case "pending":
-      return "bg-yellow-100 text-yellow-800 border border-yellow-200";
+      return "bg-amber-100 text-amber-800 border border-amber-200";
     default:
       return "bg-gray-100 text-gray-800 border border-gray-200";
   }
 };
 
-interface FeatureProperties {
-  plot_code: string;
-  status: Plot["status"];
-  area_hectares: number;
-  village: string;
-  ward: string;
-  district: string;
-  id: string;
-  block_number?: string;
-  plot_number?: string;
-  attributes?: any; // Shapefile attributes from database
-}
-
-// Enhanced geometry validation (unchanged)
+// Enhanced geometry validation with detailed logging
 const isValidGeometry = (geometry: any): boolean => {
   if (!geometry || !geometry.type || !geometry.coordinates) {
-    console.warn("[MapView] Invalid geometry: missing required properties");
     return false;
   }
 
@@ -79,74 +98,55 @@ const isValidGeometry = (geometry: any): boolean => {
       !isNaN(coord[0]) &&
       !isNaN(coord[1]) &&
       isFinite(coord[0]) &&
-      isFinite(coord[1])
+      isFinite(coord[1]) &&
+      coord[0] >= -180 &&
+      coord[0] <= 180 &&
+      coord[1] >= -90 &&
+      coord[1] <= 90
     );
-  };
-
-  const isReasonableCoordinate = (lng: number, lat: number): boolean => {
-    return lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90;
   };
 
   try {
     if (geometry.type === "Polygon") {
-      if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length === 0) {
-        return false;
-      }
-      return geometry.coordinates.every((ring: any) => {
-        if (!Array.isArray(ring) || ring.length < 4) {
-          return false;
-        }
-        return ring.every((coord) => {
-          if (!isValidCoordinate(coord)) {
-            return false;
-          }
-          if (!isReasonableCoordinate(coord[0], coord[1])) {
-            return false;
-          }
-          return true;
-        });
-      });
+      return (
+        Array.isArray(geometry.coordinates) &&
+        geometry.coordinates.length > 0 &&
+        geometry.coordinates.every((ring: any) =>
+          Array.isArray(ring) &&
+          ring.length >= 4 &&
+          ring.every(isValidCoordinate)
+        )
+      );
     }
 
     if (geometry.type === "MultiPolygon") {
-      if (!Array.isArray(geometry.coordinates) || geometry.coordinates.length === 0) {
-        return false;
-      }
-      return geometry.coordinates.every((polygon: any) => {
-        if (!Array.isArray(polygon) || polygon.length === 0) {
-          return false;
-        }
-        return polygon.every((ring) => {
-          if (!Array.isArray(ring) || ring.length < 4) {
-            return false;
-          }
-          return ring.every((coord) => {
-            if (!isValidCoordinate(coord)) {
-              return false;
-            }
-            if (!isReasonableCoordinate(coord[0], coord[1])) {
-              return false;
-            }
-            return true;
-          });
-        });
-      });
+      return (
+        Array.isArray(geometry.coordinates) &&
+        geometry.coordinates.length > 0 &&
+        geometry.coordinates.every((polygon: any) =>
+          Array.isArray(polygon) &&
+          polygon.length > 0 &&
+          polygon.every((ring: any) =>
+            Array.isArray(ring) &&
+            ring.length >= 4 &&
+            ring.every(isValidCoordinate)
+          )
+        )
+      );
     }
 
     return false;
   } catch (error) {
-    console.error("[MapView] Error validating geometry:", error);
+    console.error("[MapView] Geometry validation error:", error);
     return false;
   }
 };
 
-// Calculate polygon centroid (unchanged)
+// Optimized centroid calculation
 const getPolygonCentroid = (coordinates: number[][][]): [number, number] => {
   try {
-    const ring = coordinates[0]; // Outer ring
-    if (!ring || ring.length < 4) {
-      return [0, 0];
-    }
+    const ring = coordinates[0];
+    if (!ring || ring.length < 4) return [0, 0];
 
     let area = 0;
     let x = 0;
@@ -170,211 +170,147 @@ const getPolygonCentroid = (coordinates: number[][][]): [number, number] => {
     area *= 0.5;
     return [x / (6 * area), y / (6 * area)];
   } catch (error) {
-    console.error("[MapView] Error calculating centroid:", error);
+    console.error("[MapView] Centroid calculation error:", error);
     return [0, 0];
   }
 };
 
-// Debug container styles (unchanged)
-const debugElementStyles = (element: HTMLElement | null) => {
-  if (!element) {
-    console.error("[MapView] No element provided for debugging");
-    return null;
-  }
+interface MapViewProps {
+  onPlotSelect?: (plot: Plot) => void;
+  selectedPlotId?: string;
+  autoRefresh?: boolean;
+  refreshInterval?: number;
+}
 
-  // Set styles
-  element.style.width = "100%";
-  element.style.height = "100%";
-  element.style.zIndex = "1";
-
-  // Get computed styles
-  const computedStyles = window.getComputedStyle(element);
-  const parentStyles = element.parentElement ? window.getComputedStyle(element.parentElement) : null;
-
-  // Collect data
-  const data = {
-    width: computedStyles.width,
-    height: computedStyles.height,
-    display: computedStyles.display,
-    visibility: computedStyles.visibility,
-    zIndex: computedStyles.zIndex,
-    position: computedStyles.position,
-    opacity: computedStyles.opacity,
-    childrenCount: element.children.length,
-    firstChildDisplay: element.firstElementChild ? window.getComputedStyle(element.firstElementChild).display : null,
-    parent: parentStyles
-      ? {
-          width: parentStyles.width,
-          height: parentStyles.height,
-          display: parentStyles.display,
-          visibility: parentStyles.visibility,
-          zIndex: parentStyles.zIndex,
-        }
-      : null,
-  };
-
-  console.log("[MapView] Debug container styles:", data);
-  return data;
-};
-
-const MapView: React.FC = () => {
-  // Refs
+const MapView: React.FC<MapViewProps> = ({
+  onPlotSelect,
+  selectedPlotId,
+  autoRefresh = false,
+  refreshInterval = 30000, // 30 seconds
+}) => {
+  // Refs for map components
   const mapRef = useRef<L.Map | null>(null);
   const plotLayerRef = useRef<L.GeoJSON | null>(null);
   const labelLayerRef = useRef<L.LayerGroup | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const initializingRef = useRef(false);
-  const plotsRef = useRef<Plot[]>([]); // Store plots in ref for popup callbacks
+  const hoveredLayerRef = useRef<L.Layer | null>(null);
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // State
+  // State management
   const [plots, setPlots] = useState<Plot[]>([]);
   const [selectedPlot, setSelectedPlot] = useState<Plot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isMapInitialized, setIsMapInitialized] = useState(false);
+  const [isMapReady, setIsMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
 
-  // Changed: Removed hasLoadedPlots state, using plots.length to track loaded state
-  // This simplifies the logic and prevents unnecessary re-renders
+  // Memoized plot statistics
+  const plotStats = useMemo(() => {
+    const available = plots.filter(p => p.status === 'available').length;
+    const taken = plots.filter(p => p.status === 'taken').length;
+    const pending = plots.filter(p => p.status === 'pending').length;
+    const totalArea = plots.reduce((sum, p) => sum + (p.area_hectares || 0), 0);
 
-  /** 📌 Handles plot click */
-  const handlePlotClick = useCallback(
-    (plotId: string) => {
-      console.log('[MapView] handlePlotClick called with plotId:', plotId);
-      console.log('[MapView] Available plots in ref (first 3):', plotsRef.current.slice(0, 3).map(p => ({ id: p.id, plot_code: p.plot_code })));
+    return {
+      total: plots.length,
+      available,
+      taken,
+      pending,
+      totalArea: Math.round(totalArea * 100) / 100,
+    };
+  }, [plots]);
 
-      // Try to find plot by id first
-      let plot = plotsRef.current.find((p) => p.id === plotId);
+  // Enhanced popup content with better formatting
+  const createPopupContent = useCallback((plot: Plot) => {
+    const container = L.DomUtil.create("div", "plot-popup");
+    
+    // Header with plot code and status
+    const header = L.DomUtil.create("div", "popup-header flex justify-between items-start mb-3", container);
+    const title = L.DomUtil.create("h3", "text-lg font-bold text-gray-900", header);
+    title.textContent = `Plot ${plot.plot_code}`;
+    
+    const badge = L.DomUtil.create("span", `px-2 py-1 text-xs font-medium rounded-full ${getStatusBadgeClass(plot.status)}`, header);
+    badge.textContent = plot.status.charAt(0).toUpperCase() + plot.status.slice(1);
 
-      // If not found by id, try by plot_code
-      if (!plot) {
-        plot = plotsRef.current.find((p) => p.plot_code === plotId);
-        console.log('[MapView] Found plot by plot_code:', plot ? plot.id : 'not found');
-      }
-
-      // If still not found, try partial match on id
-      if (!plot) {
-        plot = plotsRef.current.find((p) => p.id && p.id.includes(plotId));
-        console.log('[MapView] Found plot by partial id match:', plot ? plot.id : 'not found');
-      }
-
-      if (!plot) {
-        console.error("[MapView] Plot not found with any method:", plotId);
-        return;
-      }
-
-      console.log('[MapView] Found plot:', { id: plot.id, plot_code: plot.plot_code, status: plot.status });
-      if (plot.status === "available") {
-        console.log('[MapView] Opening modal for plot:', plotId);
-        setSelectedPlot(plot);
-        setIsModalOpen(true);
-      } else {
-        console.log('[MapView] Plot not available:', plot.status);
-      }
-    },
-    []
-  );  /** 📌 Create popup content (unchanged) */
-  const createPopupContent = useCallback((feature: { properties: FeatureProperties }, plotId: string) => {
-    const container = L.DomUtil.create("div", "p-3 min-w-[320px] max-w-[400px]");
-    const { plot_code, status, area_hectares, block_number, plot_number, attributes } = feature.properties;
-
-    // Convert to square meters
-    const areaSquareMeters = (area_hectares * 10000).toLocaleString();
-
-    // Extract all data from attributes (shapefile data)
-    const blockNumber = attributes?.Block_numb || attributes?.block_numb || block_number || 'N/A';
-    const intendedUse = attributes?.Land_use || attributes?.land_use || 'Not specified';
-    const plotNumber = attributes?.Plot_Numb || attributes?.plot_numb || plot_number || plot_code;
-    const registrationNumber = attributes?.reg_pn || attributes?.Reg_pn || 'N/A';
-    const locality = attributes?.Locality || attributes?.locality || 'N/A';
-    const council = attributes?.Council || attributes?.council || 'N/A';
-    const region = attributes?.Region || attributes?.region || 'N/A';
-    const titlePlanNumber = attributes?.tp_number || attributes?.Tp_number || 'N/A';
-    const unit = attributes?.Unit || attributes?.unit || 'Sqm';
-    const fid = attributes?.fid || attributes?.FID || 'N/A';
-    const calculatedArea = attributes?.Cal_Area || attributes?.cal_area || area_hectares;
-
-    const header = L.DomUtil.create("div", "flex justify-between items-start mb-3", container);
-    const title = L.DomUtil.create("h3", "font-bold text-lg text-gray-800", header);
-    title.textContent = `Plot ${plot_code}`;
-    const badge = L.DomUtil.create("span", `px-2 py-1 text-xs font-medium rounded-full ${getStatusBadgeClass(status)}`, header);
-    badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
-
-    const details = L.DomUtil.create("div", "space-y-2 text-sm text-gray-600 mb-4", container);
+    // Plot details
+    const details = L.DomUtil.create("div", "popup-details space-y-2 text-sm mb-4", container);
+    
+    const createDetailRow = (label: string, value: string | number) => {
+      const row = L.DomUtil.create("div", "flex justify-between items-center", details);
+      const labelSpan = L.DomUtil.create("span", "text-gray-600 font-medium", row);
+      labelSpan.textContent = label;
+      const valueSpan = L.DomUtil.create("span", "text-gray-900", row);
+      valueSpan.textContent = value.toString();
+    };
 
     // Basic information
-    const area = L.DomUtil.create("div", "flex justify-between", details);
-    area.innerHTML = `<strong>Area:</strong> <span>${areaSquareMeters} ${unit}</span>`;
+    createDetailRow("Area", `${(plot.area_hectares * 10000).toLocaleString()} m²`);
+    createDetailRow("District", plot.district);
+    createDetailRow("Ward", plot.ward);
+    createDetailRow("Village", plot.village);
 
-    const blockNum = L.DomUtil.create("div", "flex justify-between", details);
-    blockNum.innerHTML = `<strong>Block Number:</strong> <span>${blockNumber}</span>`;
+    // Additional attributes from shapefile
+    if (plot.attributes) {
+      const blockNumber = plot.attributes.Block_numb || plot.attributes.block_numb || 'N/A';
+      const landUse = plot.attributes.Land_use || plot.attributes.land_use || 'Not specified';
+      const locality = plot.attributes.Locality || plot.attributes.locality || 'N/A';
+      
+      if (blockNumber !== 'N/A') createDetailRow("Block", blockNumber);
+      if (landUse !== 'Not specified') createDetailRow("Land Use", landUse);
+      if (locality !== 'N/A') createDetailRow("Locality", locality);
+    }
 
-    const plotNum = L.DomUtil.create("div", "flex justify-between", details);
-    plotNum.innerHTML = `<strong>Plot Number:</strong> <span>${plotNumber}</span>`;
-
-    // Land use information
-    const landUse = L.DomUtil.create("div", "flex justify-between", details);
-    landUse.innerHTML = `<strong>Intended Use:</strong> <span>${intendedUse}</span>`;
-
-    // Registration information
-    const regNum = L.DomUtil.create("div", "flex justify-between", details);
-    regNum.innerHTML = `<strong>Registration No:</strong> <span>${registrationNumber}</span>`;
-
-    const tpNum = L.DomUtil.create("div", "flex justify-between", details);
-    tpNum.innerHTML = `<strong>Title Plan No:</strong> <span>${titlePlanNumber}</span>`;
-
-    // Location information
-    const loc = L.DomUtil.create("div", "flex justify-between", details);
-    loc.innerHTML = `<strong>Locality:</strong> <span>${locality}</span>`;
-
-    const coun = L.DomUtil.create("div", "flex justify-between", details);
-    coun.innerHTML = `<strong>Council:</strong> <span>${council}</span>`;
-
-    const reg = L.DomUtil.create("div", "flex justify-between", details);
-    reg.innerHTML = `<strong>Region:</strong> <span>${region}</span>`;
-
-    // Additional technical information
-    const fidInfo = L.DomUtil.create("div", "flex justify-between", details);
-    fidInfo.innerHTML = `<strong>FID:</strong> <span>${fid}</span>`;
-
-    const calcArea = L.DomUtil.create("div", "flex justify-between", details);
-    calcArea.innerHTML = `<strong>Calculated Area:</strong> <span>${calculatedArea} ${unit}</span>`;
-
-    if (status === "available") {
-      const button = L.DomUtil.create(
-        "button",
-        "w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium cursor-pointer mt-3",
-        container
+    // Action button
+    const actions = L.DomUtil.create("div", "popup-actions mt-4", container);
+    
+    if (plot.status === "available") {
+      const button = L.DomUtil.create("button", 
+        "w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all duration-200 font-medium shadow-sm hover:shadow-md transform hover:-translate-y-0.5", 
+        actions
       );
       button.textContent = "Order This Plot";
-      button.type = "button"; // Ensure it's not treated as a submit button
+      button.type = "button";
 
-      // Use standard addEventListener for reliable event handling
       button.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        console.log('[MapView] Order button clicked for plot:', plotId);
-        handlePlotClick(plotId);
+        handlePlotClick(plot);
       });
 
-      // Prevent map interactions when clicking the button
       L.DomEvent.disableClickPropagation(button);
     } else {
-      const div = L.DomUtil.create(
-        "div",
-        "w-full px-4 py-2 bg-gray-300 text-gray-600 rounded-lg text-center font-medium mt-3",
-        container
+      const statusText = plot.status === 'taken' ? 'Plot Already Taken' : 'Order Pending';
+      const div = L.DomUtil.create("div", 
+        "w-full px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-center font-medium", 
+        actions
       );
-      div.textContent = "Plot Not Available";
+      div.textContent = statusText;
     }
 
     return container;
-  }, [handlePlotClick]);
+  }, []);
 
-  /** 📌 Create plot labels (unchanged) */
+  // Enhanced plot click handler
+  const handlePlotClick = useCallback((plot: Plot) => {
+    console.log('[MapView] Plot clicked:', plot.plot_code, 'Status:', plot.status);
+    
+    if (plot.status === "available") {
+      setSelectedPlot(plot);
+      setIsModalOpen(true);
+      setOrderError(null);
+      
+      // Notify parent component if callback provided
+      onPlotSelect?.(plot);
+    }
+  }, [onPlotSelect]);
+
+  // Optimized plot labels with better performance
   const createPlotLabels = useCallback((plotsData: Plot[]) => {
-    if (!mapRef.current) return;
+    if (!mapRef.current || !isMapReady) return;
 
     // Remove existing labels
     if (labelLayerRef.current) {
@@ -383,437 +319,567 @@ const MapView: React.FC = () => {
 
     labelLayerRef.current = L.layerGroup();
 
-    plotsData.forEach((plot, index) => {
-      if (!isValidGeometry(plot.geometry)) {
-        return;
+    // Only show labels at appropriate zoom levels
+    const currentZoom = mapRef.current.getZoom();
+    if (currentZoom < 12) {
+      labelLayerRef.current.addTo(mapRef.current);
+      return;
+    }
+
+    const validPlots = plotsData.filter(plot => isValidGeometry(plot.geometry));
+    
+    validPlots.forEach((plot, index) => {
+      try {
+        let centroid: [number, number];
+        const geom = plot.geometry as any;
+        
+        if (geom.type === "Polygon") {
+          centroid = getPolygonCentroid(geom.coordinates);
+        } else if (geom.type === "MultiPolygon") {
+          centroid = getPolygonCentroid(geom.coordinates[0]);
+        } else {
+          return;
+        }
+
+        if (isNaN(centroid[0]) || isNaN(centroid[1])) return;
+
+        const plotNumber = plot.attributes?.Plot_Numb || 
+                          plot.attributes?.plot_numb || 
+                          plot.plot_code.split('_').pop() || 
+                          `${index + 1}`;
+
+        const labelIcon = L.divIcon({
+          className: "plot-label",
+          html: `<div class="plot-label-content" data-status="${plot.status}">${plotNumber}</div>`,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        });
+
+        const labelMarker = L.marker([centroid[1], centroid[0]], {
+          icon: labelIcon,
+          interactive: false,
+          zIndexOffset: 1000,
+        });
+
+        labelLayerRef.current?.addLayer(labelMarker);
+      } catch (error) {
+        console.warn(`[MapView] Error creating label for plot ${plot.plot_code}:`, error);
       }
-
-      let centroid: [number, number];
-
-      const geom = plot.geometry as any;
-      if (geom.type === "Polygon") {
-        centroid = getPolygonCentroid(geom.coordinates);
-      } else if (geom.type === "MultiPolygon") {
-        // Use centroid of first polygon
-        centroid = getPolygonCentroid(geom.coordinates[0]);
-      } else {
-        return;
-      }
-
-      // Validate centroid
-      if (isNaN(centroid[0]) || isNaN(centroid[1])) {
-        return;
-      }
-
-      // Extract just the numeric part from plot code (e.g., "test_mbuyuni_0019" -> "0019")
-      const extractPlotNumber = (plotCode: string): string => {
-        const match = plotCode.match(/(\d+)$/);
-        return match ? match[1] : plotCode;
-      };
-
-      const plotNum = extractPlotNumber((plot as any).plot_number || plot.plot_code || plot.id || `Plot-${index}`);
-
-      const labelIcon = L.divIcon({
-        className: "plot-label",
-        html: `<div style="
-          background: rgba(255, 255, 255, 0.9);
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-weight: bold;
-          font-size: 11px;
-          color: #333;
-          text-shadow: 1px 1px 1px rgba(255,255,255,0.8);
-          border: 1px solid rgba(0,0,0,0.3);
-          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-          white-space: nowrap;
-        ">${plotNum}</div>`,
-        iconSize: [0, 0],
-        iconAnchor: [0, 0],
-      });
-
-      const labelMarker = L.marker([centroid[1], centroid[0]], {
-        icon: labelIcon,
-        interactive: false,
-        zIndexOffset: 1000,
-      });
-
-      labelLayerRef.current?.addLayer(labelMarker);
     });
 
     if (labelLayerRef.current) {
       labelLayerRef.current.addTo(mapRef.current);
     }
-  }, []);
+  }, [isMapReady]);
 
-  /** 📌 Render plots */
-  const renderPlots = useCallback(
-    (plotsData: Plot[]) => {
-      console.log('[MapView] renderPlots called with', plotsData.length, 'plots');
-      if (!mapRef.current || !isMapInitialized) {
-        console.warn("[MapView] Cannot render plots: map is not initialized");
-        setLoading(false);
-        return;
-      }
+  // Enhanced plot rendering with performance optimizations
+  const renderPlots = useCallback((plotsData: Plot[]) => {
+    console.log('[MapView] Rendering', plotsData.length, 'plots');
+    
+    if (!mapRef.current || !isMapReady) {
+      console.warn("[MapView] Cannot render plots: map not ready");
+      return;
+    }
 
-      if (plotLayerRef.current) {
-        mapRef.current.removeLayer(plotLayerRef.current);
-        plotLayerRef.current = null;
-      }
+    // Remove existing plot layer
+    if (plotLayerRef.current) {
+      mapRef.current.removeLayer(plotLayerRef.current);
+      plotLayerRef.current = null;
+    }
 
-      const validPlots = plotsData.filter((plot) => isValidGeometry(plot.geometry));
-      console.log("[MapView] First plot geometry:", validPlots[0]?.geometry);
-      if (validPlots.length !== plotsData.length) {
-        console.warn(`[MapView] Skipped ${plotsData.length - validPlots.length} invalid plot geometries`);
-      }
+    const validPlots = plotsData.filter(plot => isValidGeometry(plot.geometry));
+    
+    if (validPlots.length === 0) {
+      console.warn("[MapView] No valid plots to render");
+      mapRef.current.fitBounds(TANZANIA_CONFIG.bounds);
+      setLoading(false);
+      return;
+    }
 
-      if (!validPlots.length) {
-        console.warn("[MapView] No valid plots to render");
-        mapRef.current.fitBounds(TANZANIA_BOUNDS);
-        setLoading(false);
-        return;
-      }
+    // Create GeoJSON data
+    const geoJsonData = {
+      type: "FeatureCollection" as const,
+      features: validPlots.map((plot) => ({
+        type: "Feature" as const,
+        properties: {
+          id: plot.id,
+          plot_code: plot.plot_code,
+          status: plot.status,
+          area_hectares: plot.area_hectares,
+          district: plot.district,
+          ward: plot.ward,
+          village: plot.village,
+          attributes: plot.attributes || {},
+        },
+        geometry: plot.geometry,
+      })),
+    };
 
-      const geoJsonData = {
-        type: "FeatureCollection" as const,
-        features: validPlots.map((plot, index) => {
-          return {
-            type: "Feature" as const,
-            properties: {
-              ...plot,
-              plot_code: plot.plot_code || plot.id || `Plot-${index}`,
-              status: plot.status || "available",
-              area_hectares: plot.area_hectares || 0,
-              village: plot.village || "Unknown",
-              ward: plot.ward || "Unknown",
-              district: plot.district || "Unknown",
-              id: plot.id || `plot-${index}`,
-              block_number: (plot as any).block_number || "N/A",
-              plot_number: (plot as any).plot_number || plot.plot_code || plot.id,
-              attributes: plot.attributes || {}, // Explicitly include attributes
+    try {
+      // Create plot layer with enhanced interactions
+      plotLayerRef.current = L.geoJSON(geoJsonData, {
+        style: (feature) => {
+          const status = feature?.properties?.status ?? "available";
+          return getPlotStyle(status);
+        },
+        onEachFeature: (feature, layer) => {
+          const plot = validPlots.find(p => p.id === feature.properties.id);
+          if (!plot) return;
+
+          // Enhanced hover effects
+          layer.on({
+            mouseover: (e) => {
+              const target = e.target;
+              hoveredLayerRef.current = target;
+              target.setStyle(getPlotStyle(plot.status, true));
+              target.bringToFront?.();
             },
-            geometry: plot.geometry,
-          };
-        }),
-      };
-
-      try {
-        plotLayerRef.current = L.geoJSON(geoJsonData, {
-          style: (feature) => {
-            const status = feature?.properties?.status ?? "available";
-            return {
-              fillColor: getPlotColor(status),
-              weight: 3,
-              color: "#ffffff",
-              fillOpacity: 0.9,
-              dashArray: status === "pending" ? "5,5" : undefined,
-            };
-          },
-          onEachFeature: (feature, layer) => {
-            const plotId = feature.properties.id;
-            const correspondingPlot = plotsData.find(p => p.id === plotId);
-            console.log('[MapView] onEachFeature - plotId from feature:', plotId, 'found corresponding plot:', correspondingPlot ? correspondingPlot.id : 'not found');
-            layer.on({
-              mouseover: (e) => {
-                const target = e.target;
-                target.setStyle({ weight: 5, fillOpacity: 1.0, color: "#000" });
-                if (target.bringToFront) target.bringToFront();
-              },
-              mouseout: (e) => {
+            mouseout: (e) => {
+              if (hoveredLayerRef.current === e.target) {
+                hoveredLayerRef.current = null;
                 if (plotLayerRef.current) {
                   plotLayerRef.current.resetStyle(e.target as L.Path);
                 }
-              },
-            });
+              }
+            },
+            click: () => {
+              handlePlotClick(plot);
+            }
+          });
 
-            layer.bindPopup(createPopupContent(feature, plotId), {
-              maxWidth: 320,
-              className: "custom-popup",
-              closeButton: true,
-              autoPan: true,
-            });
-          },
-        }).addTo(mapRef.current);
+          // Bind popup with enhanced content
+          layer.bindPopup(createPopupContent(plot), {
+            maxWidth: 350,
+            className: "custom-popup",
+            closeButton: true,
+            autoPan: true,
+            keepInView: true,
+          });
+        },
+      });
 
-        console.log("[MapView] Added", validPlots.length, "plots to map");
-        createPlotLabels(validPlots);
-        const bounds = plotLayerRef.current.getBounds();
-        console.log("[MapView] Plot bounds:", bounds.toBBoxString());
-        if (bounds.isValid()) {
-          mapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
-        } else {
-          console.warn("[MapView] Invalid bounds for plots, using default bounds");
-          mapRef.current.fitBounds(TANZANIA_BOUNDS);
-        }
-        mapRef.current.invalidateSize();
-      } catch (err) {
-        console.error("[MapView] Error rendering GeoJSON:", err);
-        setError("Failed to render plots on map.");
-      } finally {
-        setLoading(false);
+      plotLayerRef.current.addTo(mapRef.current);
+      
+      // Create labels
+      createPlotLabels(validPlots);
+
+      // Fit bounds with padding
+      const bounds = plotLayerRef.current.getBounds();
+      if (bounds.isValid()) {
+        mapRef.current.fitBounds(bounds, { 
+          padding: [20, 20], 
+          maxZoom: 15 
+        });
+      } else {
+        mapRef.current.fitBounds(TANZANIA_CONFIG.bounds);
       }
-    },
-    [isMapInitialized, createPlotLabels, createPopupContent]
-  );
 
-  const loadingPlotsRef = useRef(false);
-
-  /** 📌 Load plots */
-  const loadPlots = useCallback(async () => {
-    console.log('[MapView] loadPlots called - isMapInitialized:', isMapInitialized, 'plots.length:', plots.length, 'loading:', loadingPlotsRef.current);
-
-    // Only load if map is initialized
-    if (!isMapInitialized) {
-      console.warn("[MapView] Skipping plot loading: map not initialized");
-      return;
+      console.log("[MapView] Successfully rendered", validPlots.length, "plots");
+      
+    } catch (err) {
+      console.error("[MapView] Error rendering plots:", err);
+      setError("Failed to render plots on map. Please try refreshing the page.");
+    } finally {
+      setLoading(false);
     }
+  }, [isMapReady, createPlotLabels, createPopupContent, handlePlotClick]);
 
-    // Prevent duplicate loading
-    if (loadingPlotsRef.current) {
-      console.warn("[MapView] Skipping plot loading: already loading");
-      return;
-    }
-
-    // Don't load if we already have plots
-    if (plotsRef.current.length > 0) {
-      console.warn("[MapView] Skipping plot loading: plots already loaded");
-      return;
-    }
-
-    loadingPlotsRef.current = true;
-
+  // Enhanced data loading with retry mechanism
+  const loadPlots = useCallback(async (retryCount = 0) => {
+    const maxRetries = 3;
+    
     try {
       setLoading(true);
       setError(null);
+      setConnectionStatus('checking');
 
-      console.log('[MapView] Starting to load plots from API...');
+      console.log('[MapView] Loading plots from API...');
       const plotsData = await plotService.getAllPlots();
-      console.log('[MapView] Received plots data:', plotsData?.length || 0, 'plots');
-
+      
       if (!plotsData?.length) {
-        setError("No land plots available.");
-        return;
+        throw new Error("No land plots available. Please check if the database has been seeded with shapefile data.");
       }
 
-      console.log('[MapView] Setting plots state with', plotsData.length, 'plots');
+      console.log('[MapView] Successfully loaded', plotsData.length, 'plots');
       setPlots(plotsData);
-      plotsRef.current = plotsData; // Store in ref for popup callbacks
-      renderPlots(plotsData);
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        console.log("[MapView] Plot loading aborted");
-        return;
+      setLastUpdate(new Date());
+      setConnectionStatus('connected');
+      
+      // Render plots if map is ready
+      if (isMapReady) {
+        renderPlots(plotsData);
       }
+      
+    } catch (err) {
       console.error("[MapView] Error loading plots:", err);
-      setError("Failed to load plots. Please check your network or try again.");
+      setConnectionStatus('disconnected');
+      
+      if (retryCount < maxRetries) {
+        console.log(`[MapView] Retrying... (${retryCount + 1}/${maxRetries})`);
+        setTimeout(() => loadPlots(retryCount + 1), 2000 * (retryCount + 1));
+      } else {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+        setError(`Failed to load plots: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
-      loadingPlotsRef.current = false;
     }
-  }, [isMapInitialized, renderPlots]);
+  }, [isMapReady, renderPlots]);
 
-  /** 📌 Initialize map */
-  const initMap = useCallback(() => {
-    if (!containerRef.current) {
-      console.error("[MapView] Map container is null");
-      setError("Map container not found.");
-      return;
-    }
-    if (mapRef.current || initializingRef.current) {
-      console.warn("[MapView] Map already initialized or initializing");
-      return;
-    }
-    initializingRef.current = true;
-
-    // Debug container styles
-    debugElementStyles(containerRef.current);
-
-    const rect = containerRef.current.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) {
-      console.warn("[MapView] Map container has invalid dimensions:", rect);
-      setError("Map container has invalid size. Please ensure it is visible.");
-      initializingRef.current = false;
+  // Initialize map with enhanced error handling
+  const initializeMap = useCallback(() => {
+    if (!containerRef.current || mapRef.current) {
       return;
     }
 
     try {
+      console.log('[MapView] Initializing map...');
+      
+      // Verify container dimensions
+      const rect = containerRef.current.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        throw new Error("Map container has invalid dimensions");
+      }
+
+      // Create map instance
       const map = L.map(containerRef.current, {
-        center: [-6.369028, 34.888822], // Tanzania center
-        zoom: 6,
-        minZoom: 10,
-        maxZoom: 46,
+        center: TANZANIA_CONFIG.center,
+        zoom: TANZANIA_CONFIG.defaultZoom,
+        minZoom: TANZANIA_CONFIG.minZoom,
+        maxZoom: TANZANIA_CONFIG.maxZoom,
         attributionControl: true,
         zoomControl: true,
+        preferCanvas: true, // Better performance for many features
       });
 
+      // Base layers with fallback
       const osmLayer = L.tileLayer(
         "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
           attribution: "&copy; OpenStreetMap contributors",
-          errorTileUrl: "https://a.tile.openstreetmap.org/0/0/0.png",
+          maxZoom: 19,
+          errorTileUrl: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgZmlsbD0iI2Y4ZjlmYSIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzZiNzI4MCI+VGlsZSBOb3QgQXZhaWxhYmxlPC90ZXh0Pjwvc3ZnPg==",
         }
-      ).on("tileerror", () => {
-        console.warn("[MapView] OSM tile loading failed, switching to fallback");
-        const fallbackLayer = L.tileLayer(
-          "https://tile.openstreetmap.de/{z}/{x}/{y}.png",
-          { attribution: "&copy; OpenStreetMap Deutschland" }
-        );
-        map.removeLayer(osmLayer);
-        fallbackLayer.addTo(map);
-      });
+      );
 
       const satelliteLayer = L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         {
-          attribution: "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics",
-          errorTileUrl: "https://a.tile.openstreetmap.org/0/0/0.png",
+          attribution: "Tiles &copy; Esri",
+          maxZoom: 19,
         }
-      ).on("tileerror", () => {
-        console.warn("[MapView] Satellite tile loading failed");
-      });
+      );
 
+      // Add default layer
       osmLayer.addTo(map);
 
+      // Layer control
       L.control.layers(
-        { "OpenStreetMap": osmLayer, "Satellite": satelliteLayer },
-        {}
+        {
+          "OpenStreetMap": osmLayer,
+          "Satellite": satelliteLayer,
+        },
+        {},
+        { position: 'topright' }
       ).addTo(map);
 
-      L.control.scale({ metric: true, imperial: false }).addTo(map);
+      // Scale control
+      L.control.scale({ 
+        metric: true, 
+        imperial: false,
+        position: 'bottomleft'
+      }).addTo(map);
+
+      // Map event handlers
+      map.on('zoomend', () => {
+        createPlotLabels(plots);
+      });
+
+      map.on('moveend', () => {
+        // Update URL with current view (optional)
+        const center = map.getCenter();
+        const zoom = map.getZoom();
+        console.log(`[MapView] Map moved to: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}, zoom: ${zoom}`);
+      });
+
+      map.on('load', () => {
+        console.log('[MapView] Map loaded successfully');
+        setIsMapReady(true);
+        setMapError(null);
+      });
+
+      map.on('error', (e) => {
+        console.error('[MapView] Map error:', e);
+        setMapError('Map failed to load properly');
+      });
 
       mapRef.current = map;
-      map.invalidateSize();
-      setIsMapInitialized(true);
-      console.log("[MapView] Map initialized successfully");
+      
+      // Force size calculation
+      setTimeout(() => {
+        map.invalidateSize();
+        setIsMapReady(true);
+      }, 100);
+
+      console.log('[MapView] Map initialized successfully');
+      
     } catch (err) {
-      console.error("[MapView] Failed to initialize map:", err);
-      setError("Failed to initialize map. Please refresh the page.");
-    } finally {
-      initializingRef.current = false;
+      console.error("[MapView] Map initialization failed:", err);
+      setMapError(`Failed to initialize map: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
-  }, []);
+  }, [plots, createPlotLabels]);
 
-  /** 📌 Handle order submission */
-  const handleOrderSubmit = useCallback(
-    async (orderData: OrderData) => {
-      if (!selectedPlot) {
-        setOrderError("No plot selected.");
-        return;
-      }
-      setOrderError(null);
-      try {
-        await plotService.createOrder(selectedPlot.id, orderData);
-        const updatedPlots = plotsRef.current.map((p) =>
-          p.id === selectedPlot.id ? { ...p, status: "pending" as const } : p
-        );
-        setPlots(updatedPlots);
-        plotsRef.current = updatedPlots; // Update ref as well
-        renderPlots(updatedPlots);
-        setSelectedPlot(null);
-        setIsModalOpen(false);
-      } catch (err) {
-        console.error("[MapView] Order submission failed:", err);
-        setOrderError("Failed to submit order. Please try again.");
-      }
-    },
-    [selectedPlot, renderPlots]
-  );
+  // Enhanced order submission with optimistic updates
+  const handleOrderSubmit = useCallback(async (orderData: OrderData) => {
+    if (!selectedPlot) {
+      setOrderError("No plot selected.");
+      return;
+    }
 
-  /** 📌 Initialize map and load plots */
+    setOrderError(null);
+    
+    try {
+      // Optimistic update
+      const optimisticPlots = plots.map(p =>
+        p.id === selectedPlot.id ? { ...p, status: "pending" as const } : p
+      );
+      setPlots(optimisticPlots);
+      renderPlots(optimisticPlots);
+
+      // Submit order
+      await plotService.createOrder(selectedPlot.id, orderData);
+      
+      console.log('[MapView] Order submitted successfully');
+      setSelectedPlot(null);
+      setIsModalOpen(false);
+      
+      // Refresh data to get latest state
+      setTimeout(() => loadPlots(), 1000);
+      
+    } catch (err) {
+      console.error("[MapView] Order submission failed:", err);
+      
+      // Revert optimistic update
+      setPlots(plots);
+      renderPlots(plots);
+      
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setOrderError(`Failed to submit order: ${errorMessage}`);
+    }
+  }, [selectedPlot, plots, renderPlots, loadPlots]);
+
+  // Auto-refresh functionality for real-time updates
   useEffect(() => {
-    // Initialize map
-    initMap();
+    if (!autoRefresh || !isMapReady) return;
 
-    // Cleanup
+    refreshIntervalRef.current = setInterval(() => {
+      console.log('[MapView] Auto-refreshing plot data...');
+      loadPlots();
+    }, refreshInterval);
+
     return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
+    };
+  }, [autoRefresh, refreshInterval, isMapReady, loadPlots]);
+
+  // Initialize map on mount
+  useEffect(() => {
+    initializeMap();
+
+    return () => {
+      // Cleanup
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current);
+      }
       if (plotLayerRef.current && mapRef.current) {
         mapRef.current.removeLayer(plotLayerRef.current);
-        plotLayerRef.current = null;
       }
       if (labelLayerRef.current && mapRef.current) {
         mapRef.current.removeLayer(labelLayerRef.current);
-        labelLayerRef.current = null;
       }
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
-      setIsMapInitialized(false);
+      setIsMapReady(false);
     };
-  }, [initMap]);
+  }, [initializeMap]);
 
-  /** 📌 Load plots after map initialization */
+  // Load plots when map is ready
   useEffect(() => {
-    if (isMapInitialized) {
+    if (isMapReady && plots.length === 0) {
       loadPlots();
     }
-  }, [isMapInitialized, loadPlots]);
+  }, [isMapReady, loadPlots, plots.length]);
+
+  // Render plots when data changes
+  useEffect(() => {
+    if (isMapReady && plots.length > 0) {
+      renderPlots(plots);
+    }
+  }, [isMapReady, plots, renderPlots]);
+
+  // Handle selected plot highlighting
+  useEffect(() => {
+    if (!selectedPlotId || !plotLayerRef.current) return;
+
+    plotLayerRef.current.eachLayer((layer: any) => {
+      if (layer.feature?.properties?.id === selectedPlotId) {
+        layer.setStyle({
+          ...getPlotStyle(layer.feature.properties.status),
+          weight: 4,
+          color: "#3B82F6", // blue-500
+        });
+      }
+    });
+  }, [selectedPlotId]);
 
   return (
-    <div className="h-full w-full relative">
+    <div className="h-full w-full relative bg-gray-100">
       {/* Map container */}
       <div
         ref={containerRef}
-        className="h-full w-full bg-gray-200"
-        style={{ minHeight: "500px", height: "100%" }}
+        className="h-full w-full"
+        style={{ minHeight: "400px" }}
       />
 
-      {/* Loading overlay */}
+      {/* Enhanced loading overlay */}
       {loading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-[10]">
-          <LoadingSpinner />
-          <p className="mt-2 text-sm text-gray-600">Loading plots...</p>
-        </div>
-      )}
-
-      {/* Error overlay */}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-[10]">
+        <div className="absolute inset-0 flex items-center justify-center bg-white/90 backdrop-blur-sm z-[1000]">
           <div className="text-center">
-            <p className="text-red-600 font-medium">{error}</p>
-            <button
-              className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg"
-              onClick={() => {
-                setError(null);
-                setPlots([]); // Reset plots to allow reloading
-                initMap();
-              }}
-            >
-              Retry
-            </button>
+            <LoadingSpinner />
+            <p className="mt-4 text-sm text-gray-600">
+              {connectionStatus === 'checking' ? 'Connecting to server...' : 'Loading land plots...'}
+            </p>
+            {connectionStatus === 'disconnected' && (
+              <p className="mt-2 text-xs text-amber-600">
+                Connection issues detected. Retrying...
+              </p>
+            )}
           </div>
         </div>
       )}
 
-      {/* Order error */}
-      {orderError && (
-        <div className="absolute top-4 left-4 bg-red-100 text-red-800 p-4 rounded-lg shadow z-[10]">
-          <p>{orderError}</p>
-          <button
-            className="mt-2 text-sm underline"
-            onClick={() => setOrderError(null)}
-          >
-            Dismiss
-          </button>
+      {/* Enhanced error overlay */}
+      {(error || mapError) && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/95 backdrop-blur-sm z-[1000]">
+          <div className="text-center max-w-md mx-4">
+            <div className="w-16 h-16 mx-auto mb-4 text-red-500">
+              <svg className="w-full h-full" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              {mapError ? 'Map Error' : 'Data Loading Error'}
+            </h3>
+            <p className="text-sm text-gray-600 mb-6">
+              {error || mapError}
+            </p>
+            <div className="space-y-3">
+              <button
+                className="w-full px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                onClick={() => {
+                  setError(null);
+                  setMapError(null);
+                  setPlots([]);
+                  if (mapError) {
+                    // Reinitialize map
+                    if (mapRef.current) {
+                      mapRef.current.remove();
+                      mapRef.current = null;
+                    }
+                    setIsMapReady(false);
+                    initializeMap();
+                  } else {
+                    loadPlots();
+                  }
+                }}
+              >
+                Try Again
+              </button>
+              <button
+                className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                onClick={() => window.location.reload()}
+              >
+                Refresh Page
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Stats */}
+      {/* Connection status indicator */}
+      <div className="absolute top-4 left-4 z-[1000]">
+        <div className={`px-3 py-1 rounded-full text-xs font-medium flex items-center space-x-2 ${
+          connectionStatus === 'connected' 
+            ? 'bg-emerald-100 text-emerald-800' 
+            : connectionStatus === 'disconnected'
+            ? 'bg-red-100 text-red-800'
+            : 'bg-amber-100 text-amber-800'
+        }`}>
+          <div className={`w-2 h-2 rounded-full ${
+            connectionStatus === 'connected' 
+              ? 'bg-emerald-500' 
+              : connectionStatus === 'disconnected'
+              ? 'bg-red-500'
+              : 'bg-amber-500 animate-pulse'
+          }`} />
+          <span>
+            {connectionStatus === 'connected' && 'Connected'}
+            {connectionStatus === 'disconnected' && 'Disconnected'}
+            {connectionStatus === 'checking' && 'Connecting...'}
+          </span>
+        </div>
+      </div>
+
+      {/* Enhanced stats panel */}
       {plots.length > 0 && !loading && !error && (
-        <div className="absolute top-4 right-4 bg-white rounded-lg shadow px-4 py-2 text-sm z-[10]">
-          <div>{plots.length} plots loaded</div>
-          <div className="flex gap-3 text-xs mt-1">
-            <span className="flex items-center">
-              <span className="w-2 h-2 bg-green-500 rounded-full mr-1" />
-              {plots.filter((p) => p.status === "available").length} available
-            </span>
-            <span className="flex items-center">
-              <span className="w-2 h-2 bg-red-500 rounded-full mr-1" />
-              {plots.filter((p) => p.status === "taken").length} taken
-            </span>
-            <span className="flex items-center">
-              <span className="w-2 h-2 bg-yellow-500 rounded-full mr-1" />
-              {plots.filter((p) => p.status === "pending").length} pending
-            </span>
+        <PlotStatsPanel 
+          stats={plotStats}
+          lastUpdate={lastUpdate}
+          connectionStatus={connectionStatus}
+        />
+      )}
+
+      {/* Map controls */}
+      {isMapReady && (
+        <MapControls
+          onRefresh={() => loadPlots()}
+          onFitBounds={() => {
+            if (mapRef.current && plotLayerRef.current) {
+              const bounds = plotLayerRef.current.getBounds();
+              if (bounds.isValid()) {
+                mapRef.current.fitBounds(bounds, { padding: [20, 20] });
+              }
+            }
+          }}
+          isLoading={loading}
+        />
+      )}
+
+      {/* Order error notification */}
+      {orderError && (
+        <div className="absolute top-4 right-4 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg shadow-lg z-[1000] max-w-sm">
+          <div className="flex items-start space-x-3">
+            <div className="w-5 h-5 text-red-500 mt-0.5">
+              <svg fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium">Order Failed</p>
+              <p className="text-xs mt-1">{orderError}</p>
+            </div>
+            <button
+              onClick={() => setOrderError(null)}
+              className="text-red-400 hover:text-red-600 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
@@ -825,6 +891,7 @@ const MapView: React.FC = () => {
           onClose={() => {
             setSelectedPlot(null);
             setIsModalOpen(false);
+            setOrderError(null);
           }}
           onSubmit={handleOrderSubmit}
         />

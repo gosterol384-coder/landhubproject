@@ -32,10 +32,12 @@ body {
 /* Enhanced popup styling with better visual hierarchy */
 .custom-popup .leaflet-popup-content-wrapper {
   border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.08);
   border: 1px solid rgba(0, 0, 0, 0.05);
   min-width: 250px;
   max-width: 350px;
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .custom-popup .leaflet-popup-content {
@@ -44,9 +46,45 @@ body {
   font-size: 14px;
 }
 
+/* Enhanced plot label styling */
+.plot-label-content {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 11px;
+  color: #374151;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  white-space: nowrap;
+  transition: all 0.2s ease-in-out;
+  backdrop-filter: blur(4px);
+}
+
+.plot-label-content[data-status="available"] {
+  border-left: 3px solid #10B981;
+}
+
+.plot-label-content[data-status="taken"] {
+  border-left: 3px solid #EF4444;
+  opacity: 0.8;
+}
+
+.plot-label-content[data-status="pending"] {
+  border-left: 3px solid #F59E0B;
+  animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-left-color: #F59E0B; }
+  50% { border-left-color: #FCD34D; }
+}
+
 /* Plot popup specific styling */
 .plot-popup {
   font-family: 'Inter', sans-serif;
+  line-height: 1.5;
 }
 
 .plot-popup .popup-header h3 {
@@ -74,12 +112,17 @@ body {
 
 /* Enhanced map container and tile loading fixes */
 .leaflet-container {
-  background: #f8f9fa;
+  background: #f8f9fa !important;
   font-family: 'Inter', sans-serif;
   height: 100%;
   width: 100%;
   position: relative;
   z-index: 0;
+  /* Enhanced rendering performance */
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: optimize-contrast;
 }
 
 /* Critical fixes for tile rendering issues */
@@ -97,6 +140,7 @@ body {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   will-change: transform;
+  max-width: none !important; /* Fix for some tile loading issues */
   /* CRITICAL: Prevent tile flickering */
   transition: opacity 0.2s ease-in-out;
 }
@@ -110,6 +154,11 @@ body {
 .leaflet-layer {
   opacity: 1 !important;
   transform: translate3d(0, 0, 0) !important;
+}
+
+/* Enhanced loading states */
+.leaflet-tile-loading {
+  opacity: 0.5 !important;
 }
 
 /* SOLUTION: Force proper map container rendering */
@@ -147,6 +196,11 @@ body {
   border: 1px solid #e5e7eb !important;
 }
 
+/* Loading overlay improvements */
+.map-loading-overlay {
+  backdrop-filter: blur(2px);
+}
+
 /* Enhanced plot styling with better visual feedback */
 .leaflet-interactive {
   cursor: pointer;
@@ -155,6 +209,11 @@ body {
 
 .leaflet-interactive:hover {
   filter: brightness(1.1);
+}
+
+/* Enhanced hover states */
+.leaflet-interactive:hover {
+  transform: scale(1.02);
 }
 
 /* Plot status-specific styling */
@@ -178,6 +237,16 @@ body {
   }
 }
 
+/* Enhanced animation for pending plots */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(245, 158, 11, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.8);
+  }
+}
+
 /* Loading spinner enhancements */
 .leaflet-control-container .leaflet-top.leaflet-left {
   pointer-events: none;
@@ -189,7 +258,7 @@ body {
 
 /* Zoom control styling */
 .leaflet-control-zoom {
-  border-radius: 8px;
+  border-radius: 8px !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   border: 1px solid rgba(0, 0, 0, 0.1);
 }
@@ -197,6 +266,7 @@ body {
 .leaflet-control-zoom a {
   border-radius: 0;
   font-family: 'Inter', sans-serif;
+  font-size: 16px;
   font-weight: 600;
   transition: all 0.2s ease-in-out;
 }
@@ -217,7 +287,7 @@ body {
 
 /* Attribution control styling */
 .leaflet-control-attribution {
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(255, 255, 255, 0.95) !important;
   border-radius: 6px;
   font-size: 11px;
   padding: 4px 8px;
@@ -225,6 +295,7 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
+/* Enhanced popup close button */
 /* Fix for popup close button */
 .leaflet-popup-close-button {
   color: #6b7280;
@@ -239,6 +310,15 @@ body {
   background-color: #f3f4f6;
   border-radius: 4px;
 }
+
+/* Enhanced popup tip styling */
+.leaflet-popup-tip {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Responsive design improvements */
 
 /* Custom scrollbar for modal */
 .modal-scroll::-webkit-scrollbar {
@@ -259,7 +339,7 @@ body {
   background: #a8a8a8;
 }
 
-/* Responsive design fixes */
+/* Enhanced responsive design */
 @media (max-width: 768px) {
   .custom-popup .leaflet-popup-content-wrapper {
     min-width: 200px;
@@ -278,6 +358,14 @@ body {
   .leaflet-control-attribution {
     font-size: 10px;
     margin: 4px;
+    padding: 2px 6px;
+  }
+  
+  .plot-label-content {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    min-width: 20px;
   }
 }
 
@@ -298,5 +386,22 @@ body {
   
   .leaflet-popup {
     display: none;
+  }
+  
+  .plot-label {
+    display: none;
+  }
+}
+
+/* Dark mode support (future enhancement) */
+@media (prefers-color-scheme: dark) {
+  .leaflet-container {
+    filter: invert(1) hue-rotate(180deg);
+  }
+  
+  .leaflet-control-zoom,
+  .leaflet-control-attribution,
+  .custom-popup .leaflet-popup-content-wrapper {
+    filter: invert(1) hue-rotate(180deg);
   }
 }
